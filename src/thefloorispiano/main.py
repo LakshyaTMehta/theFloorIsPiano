@@ -19,6 +19,9 @@ DEFAULT_NOTE = "C4"
 DRAG_RADIUS = 15
 FOOT_IDS = (27, 29, 31, 28, 30, 32)
 
+ENTRY_DWELL = 0.18   # seconds continuously inside before triggering
+EXIT_DWELL = 0.12    # seconds continuously outside before stopping
+
 CONNECTIONS = (
     (11, 12), (11, 13), (13, 15), (12, 14), (14, 16),
     (11, 23), (12, 24), (23, 24), (23, 25), (25, 27),
@@ -218,13 +221,80 @@ def draw_zones(frame, polygons, state):
         )
 
 
+_zone_debounce = {}
+
+def debounce_zones(raw_inside):
+    now = time.monotonic()
+    filtered = {}
+
+    for zone_id, is_inside in raw_inside.items():
+        state = _zone_debounce.setdefault(
+            zone_id,
+            {"active": False, "entered_at": None, "exited_at": None},
+        )
+
+        if not state["active"]:
+            if is_inside:
+                if state["entered_at"] is None:
+                    state["entered_at"] = now
+                elif now - state["entered_at"] >= ENTRY_DWELL:
+                    state["active"] = True
+                    state["entered_at"] = None
+            else:
+                state["entered_at"] = None
+        else:
+            if not is_inside:
+                if state["exited_at"] is None:
+                    state["exited_at"] = now
+                elif now - state["exited_at"] >= EXIT_DWELL:
+                    state["active"] = False
+                    state["exited_at"] = None
+            else:
+                state["exited_at"] = None
+
+        filtered[zone_id] = state["active"]
+
+    return filtered
+
+
 def update_notes(state, person_detected, now, sounds):
-    for index, inside in enumerate(state["inside_by_zone"]):
-        should_play = person_detected and inside
+    entry_dwell = 0.18  # seconds continuously inside before triggering
+    exit_dwell = 0.12   # seconds continuously outside before stopping
+
+    for index, raw_inside in enumerate(state["inside_by_zone"]):
+        raw_inside = person_detected and raw_inside
         was_inside = state["was_inside"][index]
+
+        # Debounce entry: require continuous presence for entry_dwell.
+        if not was_inside:
+            state["outside_since"][index] = None
+
+            if raw_inside:
+                if state["inside_since"][index] is None:
+                    state["inside_since"][index] = now
+                elif now - state["inside_since"][index] >= entry_dwell:
+                    was_inside = True
+                    state["inside_since"][index] = None
+            else:
+                state["inside_since"][index] = None
+
+        # Debounce exit: require continuous absence for exit_dwell.
+        else:
+            state["inside_since"][index] = None
+
+            if not raw_inside:
+                if state["outside_since"][index] is None:
+                    state["outside_since"][index] = now
+                elif now - state["outside_since"][index] >= exit_dwell:
+                    was_inside = False
+                    state["outside_since"][index] = None
+            else:
+                state["outside_since"][index] = None
+
+        should_play = was_inside
         channel = state["note_channels"][index]
 
-        if should_play and not was_inside:
+        if should_play and not state["was_inside"][index]:
             sound = sounds.get(state["zones"][index]["note"].upper())
             if sound is not None:
                 state["note_channels"][index] = sound.play(loops=-1)
@@ -281,6 +351,8 @@ def main(daemon=None):
         "note_channels": [None] * len(zones),
         "note_started_at": [None] * len(zones),
         "inside_by_zone": [False] * len(zones),
+        "inside_since": [None] * len(zones),
+        "outside_since": [None] * len(zones),
     }
 
     if not daemon:
