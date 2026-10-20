@@ -258,21 +258,18 @@ def debounce_zones(raw_inside):
 
 
 def update_notes(state, person_detected, now, sounds):
-    entry_dwell = 0.18  # seconds continuously inside before triggering
-    exit_dwell = 0.12   # seconds continuously outside before stopping
-
     for index, raw_inside in enumerate(state["inside_by_zone"]):
         raw_inside = person_detected and raw_inside
         was_inside = state["was_inside"][index]
 
-        # Debounce entry: require continuous presence for entry_dwell.
+        # Debounce entry: require continuous presence for ENTRY_DWELL.
         if not was_inside:
             state["outside_since"][index] = None
 
             if raw_inside:
                 if state["inside_since"][index] is None:
                     state["inside_since"][index] = now
-                elif now - state["inside_since"][index] >= entry_dwell:
+                elif now - state["inside_since"][index] >= ENTRY_DWELL:
                     was_inside = True
                     state["inside_since"][index] = None
             else:
@@ -285,7 +282,7 @@ def update_notes(state, person_detected, now, sounds):
             if not raw_inside:
                 if state["outside_since"][index] is None:
                     state["outside_since"][index] = now
-                elif now - state["outside_since"][index] >= exit_dwell:
+                elif now - state["outside_since"][index] >= EXIT_DWELL:
                     was_inside = False
                     state["outside_since"][index] = None
             else:
